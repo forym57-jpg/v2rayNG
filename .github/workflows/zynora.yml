@@ -1,0 +1,119 @@
+name: Zynora APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+        fetch-depth: '0'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v4
+      with:
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '14742923'
+        packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+
+    - name: Install NDK
+      run: |
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+          --channel=0 \
+          --install "ndk;30.0.16248370"
+        echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> $GITHUB_ENV
+        sed -i '10i\
+        \
+            ndkVersion = "30.0.16248370"' ${{ github.workspace }}/V2rayNG/app/build.gradle.kts
+
+    - name: Restore cached libhevtun
+      id: cache-libhevtun-restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ github.workspace }}/libs
+        key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
+
+    - name: Build libhevtun
+      if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
+      run: |
+        bash compile-hevtun.sh
+
+    - name: Save libhevtun
+      if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ github.workspace }}/libs
+        key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
+
+    - name: Copy libhevtun
+      run: |
+        cp -r ${{ github.workspace }}/libs ${{ github.workspace }}/V2rayNG/app
+
+    - name: Fetch AndroidLibXrayLite tag
+      run: |
+        pushd AndroidLibXrayLite
+        CURRENT_TAG=$(git describe --tags --abbrev=0)
+        echo "Current tag in this repo: $CURRENT_TAG"
+        echo "CURRENT_TAG=$CURRENT_TAG" >> $GITHUB_ENV
+        popd
+
+    - name: Download libv2ray
+      uses: robinraju/release-downloader@v1.13
+      with:
+        repository: '2dust/AndroidLibXrayLite'
+        tag: ${{ env.CURRENT_TAG }}
+        fileName: 'libv2ray.aar'
+        out-file-path: V2rayNG/app/libs/
+
+    - name: Setup Java
+      uses: actions/setup-java@v6.1.0
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Rebrand
+      run: |
+        cd ${{ github.workspace }}/V2rayNG/app
+        sed -i 's|applicationId = "com.v2ray.ang"|applicationId = "com.v2ray.ang.zynora"|' build.gradle.kts
+        sed -i 's|"v2rayNG_|"Zynora_|g' build.gradle.kts
+        sed -i 's|targetPackage="com.v2ray.ang"|targetPackage="com.v2ray.ang.zynora"|g' src/main/res/xml/shortcuts.xml
+        for f in src/main/res/values*/strings.xml; do
+          sed -i 's|\(<string name="app_name"[^>]*>\)[^<]*|\1Zynora|' "$f"
+        done
+        grep -n 'applicationId' build.gradle.kts | head -3
+        grep -n 'app_name' src/main/res/values/strings.xml
+
+    - name: Create signing key
+      run: |
+        KP=$(openssl rand -hex 12)
+        keytool -genkeypair -v -keystore $RUNNER_TEMP/zynora.jks -alias zynora -keyalg RSA -keysize 2048 -validity 10000 -storepass "$KP" -keypass "$KP" -dname "CN=Zynora"
+        echo "::add-mask::$KP"
+        echo "KP=$KP" >> $GITHUB_ENV
+
+    - name: Build APK
+      run: |
+        cd ${{ github.workspace }}/V2rayNG
+        echo "sdk.dir=${ANDROID_HOME}" > local.properties
+        chmod 755 gradlew
+        ./gradlew licenseFdroidReleaseReport
+        ./gradlew assembleRelease -Pandroid.injected.signing.store.file=$RUNNER_TEMP/zynora.jks -Pandroid.injected.signing.store.password=$KP -Pandroid.injected.signing.key.alias=zynora -Pandroid.injected.signing.key.password=$KP
+
+    - name: Upload arm64-v8a APK
+      uses: actions/upload-artifact@v7
+      with:
+        name: Zynora-arm64
+        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*arm64-v8a*.apk
+
+    - name: Upload universal APK
+      uses: actions/upload-artifact@v7
+      with:
+        name: Zynora-universal
+        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*universal*.apk
