@@ -79,17 +79,10 @@ jobs:
         distribution: 'temurin'
         java-version: '21'
 
-    - name: Rebrand
+    - name: Patch
       run: |
-        cd ${{ github.workspace }}/V2rayNG/app
-        sed -i 's|applicationId = "com.v2ray.ang"|applicationId = "com.v2ray.ang.zynora"|' build.gradle.kts
-        sed -i 's|"v2rayNG_|"Zynora_|g' build.gradle.kts
-        sed -i 's|targetPackage="com.v2ray.ang"|targetPackage="com.v2ray.ang.zynora"|g' src/main/res/xml/shortcuts.xml
-        for f in src/main/res/values*/strings.xml; do
-          sed -i 's|\(<string name="app_name"[^>]*>\)[^<]*|\1Zynora|' "$f"
-        done
-        grep -n 'applicationId' build.gradle.kts | head -3
-        grep -n 'app_name' src/main/res/values/strings.xml
+        pip install pillow
+        python3 plamix_patch.py
 
     - name: Create signing key
       run: |
