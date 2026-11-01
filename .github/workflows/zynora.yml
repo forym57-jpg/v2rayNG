@@ -82,7 +82,7 @@ jobs:
     - name: Patch
       run: |
         pip install pillow
-        python3 plamix_patch.py
+                python3 $(ls plamix_patch*.py | sort -V | tail -1)
 
     - name: Create signing key
       run: |
